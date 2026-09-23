@@ -47,18 +47,18 @@ install -d -m 0750 -o "$USER" -g "$USER" "$DATA_DIR"
 
 echo "==> Asking for the model server details"
 if [[ -z "$BASE_URL" ]]; then
-  read -r -p "Model server base URL [https://api.openai.com/v1]: " BASE_URL
+  read -r -p "Model server base URL [https://api.openai.com/v1]: " BASE_URL || true
   BASE_URL="${BASE_URL:-https://api.openai.com/v1}"
 fi
 if [[ -z "$API_KEY" ]]; then
   if [[ "$BASE_URL" == *"127.0.0.1"* || "$BASE_URL" == *"localhost"* ]]; then
     echo "     a local model server usually needs no key"
   fi
-  read -r -s -p "API key (Enter to skip): " API_KEY
+  read -r -s -p "API key (Enter to skip): " API_KEY || true
   echo
 fi
 if [[ -z "$MODEL" ]]; then
-  read -r -p "Default model [gpt-4o-mini]: " MODEL
+  read -r -p "Default model [gpt-4o-mini]: " MODEL || true
   MODEL="${MODEL:-gpt-4o-mini}"
 fi
 
@@ -69,9 +69,9 @@ umask 077
   echo "# self-ai-gui environment. Contains a secret: keep it 0640 root:$USER."
   echo "SELF_BASE_URL=$BASE_URL"
   echo "SELF_MODEL=$MODEL"
-  [[ -n "$MODELS" ]] && echo "SELF_MODELS=$MODELS"
-  [[ -n "$PERSON" ]] && echo "SELF_USER_NAME=$PERSON"
-  [[ -n "$API_KEY" ]] && echo "SELF_API_KEY=$API_KEY"
+  if [[ -n "$MODELS" ]]; then echo "SELF_MODELS=$MODELS"; fi
+  if [[ -n "$PERSON" ]]; then echo "SELF_USER_NAME=$PERSON"; fi
+  if [[ -n "$API_KEY" ]]; then echo "SELF_API_KEY=$API_KEY"; fi
 } > "$ENV_FILE"
 chown root:"$USER" "$ENV_FILE"
 chmod 0640 "$ENV_FILE"

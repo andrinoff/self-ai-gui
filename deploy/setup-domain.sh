@@ -60,10 +60,12 @@ TOKEN=""
 if [[ -f "$CONF" ]]; then
   # Takes the whole value, so {env.CF_DNS_API_TOKEN} or an inline token both work.
   TOKEN="$(grep -oE 'dns cloudflare (\{[^}]*\}|[^ }]+)' "$CONF" | head -n1 | awk '{print $3}' || true)"
-  [[ -n "$TOKEN" ]] && echo "     found one already in use"
+  if [[ -n "$TOKEN" ]]; then
+    echo "     found one already in use"
+  fi
 fi
 if [[ -z "$TOKEN" ]]; then
-  read -r -p "Cloudflare API token (Zone:DNS:Edit) for a real cert [Enter to use a local CA]: " TOKEN
+  read -r -p "Cloudflare API token (Zone:DNS:Edit) for a real cert [Enter to use a local CA]: " TOKEN || true
 fi
 
 echo "==> Step 4: Adding the site block for $DOMAIN"
