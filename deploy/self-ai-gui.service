@@ -1,0 +1,30 @@
+[Unit]
+Description=self-ai-gui — a chat assistant with a long-term memory
+Documentation=file:/opt/self-ai-gui/README.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=self-ai
+Group=self-ai
+WorkingDirectory=/opt/self-ai-gui
+# Holds SELF_API_KEY and friends. Mode 0640, root:self-ai; never in the unit
+# itself, so `systemctl show` stays clean and the key never reaches the journal.
+EnvironmentFile=-/etc/self-ai-gui/env
+Environment=SELF_ADDR=127.0.0.1:8090
+Environment=SELF_DATA_DIR=/var/lib/self-ai-gui
+ExecStart=/opt/self-ai-gui/self-ai-gui
+Restart=always
+RestartSec=3
+
+# Hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/self-ai-gui
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+[Install]
+WantedBy=multi-user.target

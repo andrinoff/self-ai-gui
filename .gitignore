@@ -1,0 +1,18 @@
+# Built binary at the repo root
+/self-ai-gui
+
+# Rust
+/target
+
+# Vite build output, except the placeholder that keeps rust-embed compiling
+web/dist/*
+!web/dist/.gitkeep
+web/node_modules/
+
+# Local data
+/data
+*.db
+*.db-wal
+*.db-shm
+
+.DS_Store
