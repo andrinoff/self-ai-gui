@@ -20,6 +20,12 @@ export interface Conversation {
   updated_at: string
 }
 
+/// An image attached to a message. `data` is raw base64, no `data:` prefix.
+export interface Attachment {
+  mime: string
+  data: string
+}
+
 export interface Message {
   id: number
   conversation_id: number
@@ -27,6 +33,7 @@ export interface Message {
   content: string
   reasoning: string
   model: string
+  attachments: Attachment[]
   memory_ids: number[]
   created_at: string
 }
@@ -34,6 +41,7 @@ export interface Message {
 export interface ModelInfo {
   id: string
   label: string
+  vision: boolean
 }
 
 export interface PublicConfig {

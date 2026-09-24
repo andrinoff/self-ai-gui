@@ -14,6 +14,9 @@ pub struct Config {
     pub default_model: String,
     /// Models offered in the UI. Empty means "ask the upstream for its list".
     pub models: Vec<String>,
+    /// Models that may be sent images, listed explicitly because the provider
+    /// does not say. Complements the built-in family heuristic.
+    pub vision_models: Vec<String>,
     /// Whether conversations are mined for durable notes.
     pub memory_enabled: bool,
     /// User turns between automatic memory extractions.
@@ -44,6 +47,7 @@ impl Config {
             api_key: first_env(&["SELF_API_KEY", "OPENAI_API_KEY"]),
             default_model: env_or("SELF_MODEL", "gpt-4o-mini"),
             models: env_list("SELF_MODELS"),
+            vision_models: env_list("SELF_VISION_MODELS"),
             memory_enabled: env_flag("SELF_MEMORY", true),
             memory_every: env_num("SELF_MEMORY_EVERY", 2),
             memory_budget: env_num("SELF_MEMORY_BUDGET", 1200),

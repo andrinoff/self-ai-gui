@@ -142,6 +142,7 @@ fn start_app(notes: &'static str, memory_every: usize) -> App {
         api_key: Some("stub-key".into()),
         default_model: "stub-model".into(),
         models: vec![],
+        vision_models: vec![],
         memory_enabled: true,
         memory_every,
         memory_budget: 1200,
@@ -152,11 +153,9 @@ fn start_app(notes: &'static str, memory_every: usize) -> App {
         user_name: "Drew".into(),
         timeout_secs: 10,
     };
-    let state = Arc::new(AppState {
-        store: Arc::new(Store::open(&cfg.db_path).unwrap()),
-        upstream: Arc::new(Upstream::new(&cfg)),
-        cfg,
-    });
+    let store = Arc::new(Store::open(&cfg.db_path).unwrap());
+    let upstream = Arc::new(Upstream::new(&cfg));
+    let state = Arc::new(AppState::new(store, cfg, upstream));
     App {
         router: router(state),
         _dir: dir,
@@ -262,6 +261,71 @@ async fn a_reply_is_streamed_stored_and_told_what_it_remembers() {
     let (_, conversation) = call_json(&app, "GET", &format!("/api/conversations/{id}"), None).await;
     assert_eq!(conversation["title"], "What should I drink while I work?");
     assert_eq!(conversation["message_count"], 2);
+}
+
+#[tokio::test]
+async fn an_image_reaches_the_model_only_on_a_vision_model() {
+    let app = start_app("[]", 99);
+    let (_, conversation) = call_json(&app, "POST", "/api/conversations", Some(json!({}))).await;
+    let id = conversation["id"].as_i64().unwrap();
+    let image = json!({ "mime": "image/png", "data": "aGVsbG8=" });
+
+    // The stub model sees nothing, so the image is refused rather than dropped.
+    let (status, body) = call(
+        &app,
+        "POST",
+        &format!("/api/conversations/{id}/messages"),
+        Some(json!({ "content": "what is this?", "attachments": [image] })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert!(body.contains("cannot see images"), "{body}");
+
+    // A vision model gets the text and the image as one parts array.
+    let (status, body) = call(
+        &app,
+        "POST",
+        &format!("/api/conversations/{id}/messages"),
+        Some(json!({
+            "content": "what is this?",
+            "model": "gpt-4o",
+            "attachments": [image],
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+
+    let sent = app.stub_seen.lock().unwrap().clone();
+    let request = sent
+        .iter()
+        .rev()
+        .find(|r| r["stream"] == true)
+        .expect("the streaming call happened");
+    let user_turn = request["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .rev()
+        .find(|m| m["role"] == "user")
+        .expect("the user turn was sent");
+    assert_eq!(user_turn["content"][0]["type"], "text");
+    assert_eq!(user_turn["content"][1]["type"], "image_url");
+    assert_eq!(
+        user_turn["content"][1]["image_url"]["url"],
+        "data:image/png;base64,aGVsbG8="
+    );
+
+    // The image survives a reload, so the bubble still shows it later.
+    let (_, messages) = call_json(
+        &app,
+        "GET",
+        &format!("/api/conversations/{id}/messages"),
+        None,
+    )
+    .await;
+    let stored = messages.as_array().unwrap()[0].clone();
+    assert_eq!(stored["attachments"][0]["mime"], "image/png");
+    assert_eq!(stored["attachments"][0]["data"], "aGVsbG8=");
 }
 
 #[tokio::test]

@@ -51,11 +51,7 @@ pub async fn main_entry() -> Result<(), Box<dyn std::error::Error>> {
     println!("  database {}", cfg.db_path.display());
 
     let addr = cfg.addr.clone();
-    let state = Arc::new(api::AppState {
-        store,
-        upstream,
-        cfg,
-    });
+    let state = Arc::new(api::AppState::new(store, cfg, upstream));
 
     let listener = TcpListener::bind(&addr).await?;
     axum::serve(listener, api::router(state))

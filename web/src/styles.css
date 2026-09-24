@@ -257,6 +257,18 @@ button {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+.bubble-attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+.bubble-attachments img {
+  display: block;
+  max-width: 200px;
+  max-height: 200px;
+  border-radius: 12px;
+}
 .turn.assistant {
   gap: 13px;
   align-items: flex-start;
@@ -461,7 +473,7 @@ button {
 .composer-wrap {
   position: relative;
   flex-shrink: 0;
-  padding: 10px 24px 22px;
+  padding: 10px 24px calc(22px + env(safe-area-inset-bottom, 0px));
   background: var(--bg);
 }
 .composer {
@@ -475,6 +487,62 @@ button {
 }
 .composer:focus-within {
   border-color: var(--line-strong);
+}
+.attachments {
+  list-style: none;
+  margin: 0 0 10px;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.attachment {
+  position: relative;
+  width: 60px;
+  height: 60px;
+  border-radius: 12px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+}
+.attachment img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.attachment-remove {
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.6);
+  color: #fff;
+}
+.attachment-remove svg {
+  width: 11px;
+  height: 11px;
+}
+.attach {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  color: var(--ink-2);
+  transition: background 0.12s var(--ease), color 0.12s var(--ease);
+}
+.attach svg {
+  width: 18px;
+  height: 18px;
+}
+.attach:hover {
+  background: var(--bg-hover);
+  color: var(--ink);
 }
 .composer-input {
   display: block;
@@ -602,6 +670,21 @@ button {
 }
 .model-option-label {
   font-size: 0.88rem;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.model-option-tag {
+  flex-shrink: 0;
+  font-size: 0.64rem;
+  color: var(--ink-3);
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  padding: 1px 7px;
 }
 .model-option-id {
   font-family: var(--mono);
@@ -834,6 +917,43 @@ button {
   cursor: not-allowed;
 }
 
+/* ---------- phone chrome (hidden until the narrow breakpoint) ---------- */
+.phone-bar {
+  display: none;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+  padding: 6px 8px;
+  background: var(--bg);
+  border-bottom: 1px solid var(--line);
+}
+.phone-brand {
+  margin: 0 auto;
+  font-size: 0.94rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+.phone-icon {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 12px;
+  color: var(--ink-2);
+  transition: background 0.12s var(--ease), color 0.12s var(--ease);
+}
+.phone-icon svg {
+  width: 20px;
+  height: 20px;
+}
+.phone-icon:hover {
+  background: var(--bg-hover);
+  color: var(--ink);
+}
+.rail-scrim {
+  display: none;
+}
+
 /* ---------- toast ---------- */
 .note-toast {
   position: fixed;
@@ -891,42 +1011,116 @@ button {
     opacity: 1;
   }
 }
+@keyframes fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
 
 /* ---------- responsive ---------- */
 @media (max-width: 760px) {
   .app {
     grid-template-columns: 1fr;
-    grid-template-rows: auto 1fr;
   }
+  /* The sidebar becomes an off-canvas panel behind a hamburger, so a phone
+     spends its height on the conversation rather than on the chat list. */
   .rail {
-    max-height: 42vh;
-    overflow-y: auto;
-    border-bottom: 1px solid var(--line);
+    position: fixed;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    z-index: 55;
+    width: min(84vw, 320px);
+    max-height: none;
+    overflow: hidden;
+    box-shadow: 6px 0 28px rgba(0, 0, 0, 0.22);
+    transform: translateX(-102%);
+    transition: transform 0.22s var(--ease);
+    padding-top: env(safe-area-inset-top, 0px);
+    padding-bottom: env(safe-area-inset-bottom, 0px);
   }
-  .rail-head {
-    padding: 8px 10px 0;
+  .app.menu-open .rail {
+    transform: none;
   }
-  .threads {
-    padding: 0 10px 8px;
+  .rail-scrim {
+    display: block;
+    position: fixed;
+    inset: 0;
+    z-index: 50;
+    background: var(--scrim);
+    animation: fade 0.18s var(--ease) both;
+  }
+  .phone-bar {
+    display: flex;
+    padding-top: calc(6px + env(safe-area-inset-top, 0px));
   }
   .stack {
-    padding: 20px 16px 16px;
-    gap: 22px;
+    padding: 18px 14px 16px;
+    gap: 20px;
+  }
+  .turn.assistant {
+    gap: 10px;
+  }
+  .avatar {
+    width: 24px;
+    height: 24px;
   }
   .bubble {
-    max-width: 85%;
+    max-width: 88%;
+  }
+  .bubble-attachments img {
+    max-width: 150px;
+    max-height: 150px;
+  }
+  .composer {
+    border-radius: 22px;
+    padding: 10px 10px 8px 14px;
+  }
+  /* 16px stops iOS from zooming the page when the field is focused. */
+  .composer-input,
+  .note-add input,
+  .note-search,
+  .note-edit textarea {
+    font-size: 16px;
   }
   .composer-wrap {
-    padding: 8px 14px 16px;
+    padding: 8px 12px calc(14px + env(safe-area-inset-bottom, 0px));
+  }
+  .attach,
+  .send {
+    width: 38px;
+    height: 38px;
   }
   .model-pick {
-    max-width: 55%;
+    max-width: 52%;
+    padding: 7px 8px 7px 12px;
+    font-size: 0.82rem;
+  }
+  .model-menu {
+    width: calc(100% - 24px);
+    max-height: 42vh;
+  }
+  .suggestion {
+    padding: 10px 16px;
+    font-size: 0.88rem;
+  }
+  .thinking-body {
+    max-height: 240px;
+  }
+  .drawer {
+    width: 100%;
+  }
+  .note-toast {
+    bottom: calc(110px + env(safe-area-inset-bottom, 0px));
   }
   .welcome {
-    min-height: 40vh;
+    min-height: 36vh;
   }
   .welcome-title {
-    font-size: 1.35rem;
+    font-size: 1.3rem;
   }
 }
 

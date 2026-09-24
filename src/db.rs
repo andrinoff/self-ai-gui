@@ -9,7 +9,7 @@ use std::sync::Mutex;
 
 use rusqlite::{Connection, OptionalExtension, params};
 
-use crate::model::{Conversation, Memory, Message};
+use crate::model::{Attachment, Conversation, Memory, Message};
 
 pub struct Store {
     conn: Mutex<Connection>,
@@ -104,6 +104,10 @@ impl Store {
         // fails harmlessly, which is why the result is ignored.
         let _ = conn.execute(
             "ALTER TABLE messages ADD COLUMN reasoning TEXT NOT NULL DEFAULT ''",
+            [],
+        );
+        let _ = conn.execute(
+            "ALTER TABLE messages ADD COLUMN attachments TEXT NOT NULL DEFAULT '[]'",
             [],
         );
         Ok(Store {
@@ -235,11 +239,13 @@ impl Store {
     pub fn list_messages(&self, conversation_id: i64) -> Result<Vec<Message>, StoreError> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, conversation_id, role, content, reasoning, model, memory_ids, created_at
+            "SELECT id, conversation_id, role, content, reasoning, model, memory_ids,
+                    attachments, created_at
              FROM messages WHERE conversation_id = ? ORDER BY id",
         )?;
         let rows = stmt.query_map([conversation_id], |row| {
             let ids: String = row.get(6)?;
+            let attachments: String = row.get(7)?;
             Ok(Message {
                 id: row.get(0)?,
                 conversation_id: row.get(1)?,
@@ -248,7 +254,8 @@ impl Store {
                 reasoning: row.get(4)?,
                 model: row.get(5)?,
                 memory_ids: parse_ids(&ids),
-                created_at: row.get(7)?,
+                attachments: parse_attachments(&attachments),
+                created_at: row.get(8)?,
             })
         })?;
         let mut out = Vec::new();
@@ -266,17 +273,20 @@ impl Store {
         content: &str,
         model: &str,
         memory_ids: &[i64],
+        attachments: &[Attachment],
     ) -> Result<i64, StoreError> {
         let conn = self.conn.lock().unwrap();
         conn.execute(
-            "INSERT INTO messages (conversation_id, role, content, model, memory_ids, created_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            "INSERT INTO messages
+                (conversation_id, role, content, model, memory_ids, attachments, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
             params![
                 conversation_id,
                 role,
                 content,
                 model,
                 encode_ids(memory_ids),
+                encode_attachments(attachments),
                 now()
             ],
         )?;
@@ -479,4 +489,14 @@ fn parse_ids(raw: &str) -> Vec<i64> {
     raw.split(',')
         .filter_map(|part| part.trim().parse().ok())
         .collect()
+}
+
+fn encode_attachments(attachments: &[Attachment]) -> String {
+    serde_json::to_string(attachments).unwrap_or_else(|_| "[]".to_string())
+}
+
+/// A malformed row reads as "no attachments" rather than failing the whole
+/// transcript: the text of the message is still worth showing.
+fn parse_attachments(raw: &str) -> Vec<Attachment> {
+    serde_json::from_str(raw).unwrap_or_default()
 }

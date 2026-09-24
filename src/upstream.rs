@@ -143,11 +143,23 @@ impl Upstream {
             }
             out.push(ModelInfo {
                 label: label_for(&id),
+                vision: declared_vision(item) || vision_capable(&id),
                 id,
             });
         }
         out.sort_by(|a, b| a.id.cmp(&b.id));
         Ok(out)
+    }
+
+    /// Resolves a configured model id (one named in SELF_MODELS) into the list
+    /// shape, using the capability hint when there is one. A configured id is
+    /// never looked up upstream, so the heuristic is all there is.
+    pub fn describe_model(&self, id: &str, declared_vision: bool) -> ModelInfo {
+        ModelInfo {
+            id: id.to_string(),
+            label: id.to_string(),
+            vision: declared_vision || vision_capable(id),
+        }
     }
 
     /// Streams a reply as deltas, using exactly the standard Chat Completions
@@ -328,6 +340,61 @@ fn snippet(body: &str) -> String {
     }
 }
 
+/// Reads the provider's own statement of vision support out of a /models
+/// entry. Providers disagree on where it lives, so a few shapes are accepted:
+/// a `vision` flag (top level or under `capabilities`, boolean or present as
+/// an object) and OpenRouter's `input_modalities` list.
+fn declared_vision(item: &serde_json::Value) -> bool {
+    fn is_true(value: Option<&serde_json::Value>) -> bool {
+        match value {
+            Some(serde_json::Value::Bool(b)) => *b,
+            Some(serde_json::Value::Object(_)) => true,
+            _ => false,
+        }
+    }
+    fn has_image_modalities(item: &serde_json::Value, path: &str) -> bool {
+        item.pointer(path)
+            .and_then(|list| list.as_array())
+            .is_some_and(|list| list.iter().any(|m| m.as_str() == Some("image")))
+    }
+    is_true(item.get("vision"))
+        || is_true(item.pointer("/capabilities/vision"))
+        || has_image_modalities(item, "/input_modalities")
+        || has_image_modalities(item, "/architecture/input_modalities")
+        || has_image_modalities(item, "/capabilities/input_modalities")
+}
+
+/// Vision support for providers that do not declare it, by model family.
+/// Conservative on purpose: it exists so the attach control appears for the
+/// common vision models, and a model that sees nothing simply never offers it.
+pub fn vision_capable(id: &str) -> bool {
+    let id = id.to_lowercase();
+    const FAMILIES: [&str; 21] = [
+        "gpt-4o",
+        "gpt-4.1",
+        "gpt-5",
+        "o1-",
+        "o3-",
+        "o4-",
+        "claude-3",
+        "claude-4",
+        "claude-sonnet-4",
+        "claude-opus-4",
+        "claude-haiku-4",
+        "gemini-1.5",
+        "gemini-2",
+        "gemini-3",
+        "llava",
+        "qwen2-vl",
+        "qwen3-vl",
+        "pixtral",
+        "glm-4v",
+        "vision",
+        "granite-vision",
+    ];
+    FAMILIES.iter().any(|family| id.contains(family))
+}
+
 fn label_for(id: &str) -> String {
     let lower = id.to_lowercase();
     if let Some(rest) = lower.strip_prefix("claude-") {
@@ -413,5 +480,29 @@ mod tests {
         assert_eq!(label_for("gpt-4o-mini"), "gpt-4o-mini");
         assert_eq!(label_for("claude-sonnet-4-5"), "Claude sonnet-4-5");
         assert_eq!(label_for("gemini-2.0-flash"), "Gemini 2.0-flash");
+    }
+
+    #[test]
+    fn vision_capability_comes_from_declaration_or_family() {
+        let from_plain_flag = serde_json::json!({ "id": "x", "capabilities": { "vision": true } });
+        assert!(declared_vision(&from_plain_flag));
+
+        let from_modalities = serde_json::json!({
+            "id": "x",
+            "architecture": { "input_modalities": ["text", "image"] }
+        });
+        assert!(declared_vision(&from_modalities));
+
+        let text_only = serde_json::json!({
+            "id": "x",
+            "architecture": { "input_modalities": ["text"] }
+        });
+        assert!(!declared_vision(&text_only));
+
+        assert!(vision_capable("gpt-4o-mini"));
+        assert!(vision_capable("openai/gpt-5"));
+        assert!(vision_capable("anthropic/claude-sonnet-4-5"));
+        assert!(!vision_capable("stub-model"));
+        assert!(!vision_capable("gpt-3.5-turbo"));
     }
 }

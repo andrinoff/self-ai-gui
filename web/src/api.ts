@@ -1,4 +1,4 @@
-import type { Conversation, Memory, Message, ModelInfo, PublicConfig, StreamEvent } from './types'
+import type { Attachment, Conversation, Memory, Message, ModelInfo, PublicConfig, StreamEvent } from './types'
 
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
   const res = await fetch(path, {
@@ -43,13 +43,14 @@ export async function streamMessage(
   conversationId: number,
   content: string,
   model: string,
+  attachments: Attachment[],
   signal: AbortSignal,
   onEvent: (event: StreamEvent) => void,
 ): Promise<void> {
   const res = await fetch(`/api/conversations/${conversationId}/messages`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ content, model }),
+    body: JSON.stringify({ content, model, attachments }),
     signal,
   })
   if (!res.ok || !res.body) {
@@ -101,6 +102,12 @@ export async function streamMessage(
 }
 
 // --- small formatting helpers ---
+
+/// The data URL for an attachment, which is what both an <img> and the model
+/// expect. The prefix is added here so the stored base64 stays small.
+export function attachmentUrl(attachment: Attachment): string {
+  return `data:${attachment.mime};base64,${attachment.data}`
+}
 
 export function when(iso: string): string {
   const date = new Date(iso)

@@ -1,7 +1,8 @@
 //! HTTP surface: conversations, messages (streamed), models and memories.
 
+use std::collections::HashMap;
 use std::convert::Infallible;
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
@@ -16,13 +17,42 @@ use crate::config::Config;
 use crate::db::{Store, StoreError};
 use crate::model::{ChatTurn, Conversation, Memory, Message, ModelInfo, SendMessage, valid_kind};
 use crate::prompts;
-use crate::upstream::{StreamEvent, Upstream, UpstreamError};
+use crate::upstream::{StreamEvent, Upstream, UpstreamError, vision_capable};
 use crate::{assets, memory};
 
 pub struct AppState {
     pub store: Arc<Store>,
     pub cfg: Config,
     pub upstream: Arc<Upstream>,
+    /// What the provider said about image support, keyed by model id. Filled
+    /// when the model list is fetched, so a send agrees with what the UI
+    /// showed instead of guessing from the model name.
+    pub vision: Arc<RwLock<HashMap<String, bool>>>,
+}
+
+impl AppState {
+    pub fn new(store: Arc<Store>, cfg: Config, upstream: Arc<Upstream>) -> AppState {
+        AppState {
+            store,
+            cfg,
+            upstream,
+            vision: Arc::new(RwLock::new(HashMap::new())),
+        }
+    }
+
+    /// True when this model may be sent images: the explicit config list, what
+    /// the provider declared, or the built-in family heuristic.
+    fn model_sees(&self, id: &str) -> bool {
+        if self.cfg.vision_models.iter().any(|m| m == id) {
+            return true;
+        }
+        if let Ok(cache) = self.vision.read()
+            && let Some(known) = cache.get(id)
+        {
+            return *known;
+        }
+        vision_capable(id)
+    }
 }
 
 pub fn router(state: Arc<AppState>) -> Router {
@@ -133,6 +163,12 @@ async fn get_config(State(state): State<Arc<AppState>>) -> impl IntoResponse {
 /// The model list for the picker: configured names first, otherwise whatever
 /// the upstream reports. Never fails the page: an unreachable provider gives
 /// the default model instead of an error.
+/// Whether this model may be sent images, when the provider's own statement is
+/// not available: a family heuristic plus any explicit SELF_VISION_MODELS entry.
+fn vision_for(cfg: &Config, id: &str) -> bool {
+    cfg.vision_models.iter().any(|m| m == id) || vision_capable(id)
+}
+
 async fn list_models(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     let mut models: Vec<ModelInfo> = if state.cfg.models.is_empty() {
         state.upstream.list_models().await.unwrap_or_default()
@@ -144,6 +180,7 @@ async fn list_models(State(state): State<Arc<AppState>>) -> impl IntoResponse {
             .map(|id| ModelInfo {
                 id: id.clone(),
                 label: id.clone(),
+                vision: vision_for(&state.cfg, id),
             })
             .collect()
     };
@@ -154,8 +191,18 @@ async fn list_models(State(state): State<Arc<AppState>>) -> impl IntoResponse {
             ModelInfo {
                 id: state.cfg.default_model.clone(),
                 label: state.cfg.default_model.clone(),
+                vision: vision_for(&state.cfg, &state.cfg.default_model),
             },
         );
+    }
+    // The explicit list always wins, even when the upstream also reports it.
+    for model in models.iter_mut() {
+        if state.cfg.vision_models.contains(&model.id) {
+            model.vision = true;
+        }
+        if let Ok(mut cache) = state.vision.write() {
+            cache.insert(model.id.clone(), model.vision);
+        }
     }
     Json(models)
 }
@@ -380,11 +427,33 @@ async fn send_message(
     Json(body): Json<SendMessage>,
 ) -> Result<Sse<impl Stream<Item = Result<Event, Infallible>>>, ApiError> {
     let content = body.content.trim().to_string();
-    if content.is_empty() {
+    let attachments = body.attachments;
+    if content.is_empty() && attachments.is_empty() {
         return Err(ApiError::new(
             StatusCode::BAD_REQUEST,
             "say something first",
         ));
+    }
+    if attachments.len() > 4 {
+        return Err(ApiError::new(
+            StatusCode::BAD_REQUEST,
+            "attach at most 4 images at a time",
+        ));
+    }
+    for attachment in &attachments {
+        if !attachment.mime.starts_with("image/") {
+            return Err(ApiError::new(
+                StatusCode::BAD_REQUEST,
+                "only images can be attached",
+            ));
+        }
+        // Roughly the decoded size: base64 is 4/3 of the bytes it carries.
+        if attachment.data.len() > 10 * 1024 * 1024 {
+            return Err(ApiError::new(
+                StatusCode::PAYLOAD_TOO_LARGE,
+                "each image must stay under about 8 MB",
+            ));
+        }
     }
 
     let conversation = db(&state.store, move |s| s.get_conversation(id)).await?;
@@ -393,6 +462,14 @@ async fn send_message(
         .filter(|m| !m.trim().is_empty())
         .or_else(|| Some(conversation.model.clone()).filter(|m| !m.trim().is_empty()))
         .unwrap_or_else(|| state.cfg.default_model.clone());
+    if !attachments.is_empty() && !state.model_sees(&model) {
+        return Err(ApiError::new(
+            StatusCode::BAD_REQUEST,
+            format!(
+                "{model} cannot see images; pick a vision model first, or add it to SELF_VISION_MODELS"
+            ),
+        ));
+    }
     if conversation.model.is_empty() {
         let model = model.clone();
         db(&state.store, move |s| {
@@ -403,8 +480,9 @@ async fn send_message(
 
     // Remember the user's turn first, so the transcript survives a failed reply.
     let user_text = content.clone();
+    let user_attachments = attachments.clone();
     let user_message_id = db(&state.store, move |s| {
-        s.insert_message(id, "user", &user_text, "", &[])
+        s.insert_message(id, "user", &user_text, "", &[], &user_attachments)
     })
     .await?;
 
@@ -445,16 +523,13 @@ async fn send_message(
     let system = prompts::system_prompt(&persona, &memories);
 
     let history = db(&state.store, move |s| s.list_messages(id)).await?;
-    let mut turns = vec![ChatTurn {
-        role: "system".into(),
-        content: system,
-    }];
+    let mut turns = vec![ChatTurn::text("system", system)];
     turns.extend(replay(&history, user_message_id, &state.cfg));
 
     let model_for_row = model.clone();
     let ids_for_row = memory_ids.clone();
     let placeholder = db(&state.store, move |s| {
-        s.insert_message(id, "assistant", "", &model_for_row, &ids_for_row)
+        s.insert_message(id, "assistant", "", &model_for_row, &ids_for_row, &[])
     })
     .await?;
 
@@ -627,10 +702,7 @@ async fn extract_and_store(
     let turns: Vec<ChatTurn> = history
         .iter()
         .filter(|m| m.role == "user" || m.role == "assistant")
-        .map(|m| ChatTurn {
-            role: m.role.clone(),
-            content: m.content.clone(),
-        })
+        .map(|m| ChatTurn::text(&m.role, m.content.clone()))
         .collect();
     let transcript = prompts::transcript_slice(&turns, 4000);
     if transcript.trim().is_empty() {
@@ -684,10 +756,17 @@ fn replay(history: &[Message], up_to: i64, cfg: &Config) -> Vec<ChatTurn> {
             break;
         }
         used += cost;
-        turns.push(ChatTurn {
-            role: message.role.clone(),
-            content: message.content.clone(),
-        });
+        let mut turn = ChatTurn::text(&message.role, message.content.clone());
+        // Only the turn being sent carries its images: older ones would repeat
+        // megabytes of base64 on every request and are already in the thread.
+        if message.id == up_to && message.role == "user" {
+            turn.images = message
+                .attachments
+                .iter()
+                .map(|a| format!("data:{};base64,{}", a.mime, a.data))
+                .collect();
+        }
+        turns.push(turn);
     }
     turns.reverse();
     turns
@@ -718,6 +797,7 @@ mod tests {
             api_key: Some("test".into()),
             default_model: "test-model".into(),
             models: vec![],
+            vision_models: vec![],
             memory_enabled: true,
             memory_every: 2,
             memory_budget: 1200,
@@ -738,6 +818,7 @@ mod tests {
             content: content.into(),
             reasoning: String::new(),
             model: String::new(),
+            attachments: vec![],
             memory_ids: vec![],
             created_at: String::new(),
         }

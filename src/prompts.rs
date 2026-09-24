@@ -85,16 +85,13 @@ pub fn extraction_turns(known: &[Memory], transcript: &str) -> Vec<ChatTurn> {
             .join("\n")
     };
     vec![
-        ChatTurn {
-            role: "system".into(),
-            content: EXTRACTION_PROMPT.into(),
-        },
-        ChatTurn {
-            role: "user".into(),
-            content: format!(
+        ChatTurn::text("system", EXTRACTION_PROMPT),
+        ChatTurn::text(
+            "user",
+            format!(
                 "Already known about the user:\n{known_block}\n\nConversation to mine:\n{transcript}\n\nReturn the JSON array now."
             ),
-        },
+        ),
     ]
 }
 
@@ -171,18 +168,9 @@ mod tests {
     #[test]
     fn transcript_slice_keeps_the_newest_turns_and_respects_the_budget() {
         let turns = vec![
-            ChatTurn {
-                role: "user".into(),
-                content: "old message".into(),
-            },
-            ChatTurn {
-                role: "assistant".into(),
-                content: "old reply".into(),
-            },
-            ChatTurn {
-                role: "user".into(),
-                content: "new message".into(),
-            },
+            ChatTurn::text("user", "old message"),
+            ChatTurn::text("assistant", "old reply"),
+            ChatTurn::text("user", "new message"),
         ];
         let full = transcript_slice(&turns, 1000);
         assert!(full.starts_with("User: old message"));

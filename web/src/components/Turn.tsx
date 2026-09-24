@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { attachmentUrl } from '../api'
 import { Markdown } from './Markdown'
 import type { Message } from '../types'
 
@@ -32,7 +33,24 @@ export function Turn({ message, streaming, error }: TurnProps) {
   if (message.role === 'user') {
     return (
       <article className="turn user">
-        <div className="bubble">{message.content}</div>
+        <div className="bubble">
+          {message.attachments.length > 0 && (
+            <div className="bubble-attachments">
+              {message.attachments.map((attachment, index) => (
+                <a
+                  key={`${attachment.mime}-${index}`}
+                  href={attachmentUrl(attachment)}
+                  target="_blank"
+                  rel="noreferrer"
+                  aria-label={`Open image ${index + 1} full size`}
+                >
+                  <img src={attachmentUrl(attachment)} alt="" />
+                </a>
+              ))}
+            </div>
+          )}
+          {message.content}
+        </div>
       </article>
     )
   }

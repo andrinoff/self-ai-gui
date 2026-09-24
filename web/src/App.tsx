@@ -4,7 +4,26 @@ import { Composer } from './components/Composer'
 import { MemoryDrawer } from './components/MemoryDrawer'
 import { Rail } from './components/Rail'
 import { Turn } from './components/Turn'
-import type { Conversation, Memory, Message, ModelInfo, PublicConfig } from './types'
+import type { Attachment, Conversation, Memory, Message, ModelInfo, PublicConfig } from './types'
+
+const MAX_IMAGES = 4
+const MAX_IMAGE_BYTES = 8 * 1024 * 1024
+
+function readAttachment(file: File): Promise<Attachment> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => {
+      const url = String(reader.result)
+      const comma = url.indexOf(',')
+      resolve({
+        mime: file.type || 'image/png',
+        data: comma >= 0 ? url.slice(comma + 1) : url,
+      })
+    }
+    reader.onerror = () => reject(reader.error ?? new Error('could not read that file'))
+    reader.readAsDataURL(file)
+  })
+}
 
 export function App() {
   const [config, setConfig] = useState<PublicConfig | null>(null)
@@ -15,10 +34,12 @@ export function App() {
   const [activeId, setActiveId] = useState<number | null>(null)
   const [messages, setMessages] = useState<Message[]>([])
   const [memories, setMemories] = useState<Memory[]>([])
+  const [attachments, setAttachments] = useState<Attachment[]>([])
   const [draft, setDraft] = useState('')
   const [busy, setBusy] = useState(false)
   const [note, setNote] = useState<string | null>(null)
   const [drawer, setDrawer] = useState(false)
+  const [menuOpen, setMenuOpen] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const abort = useRef<AbortController | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -52,14 +73,41 @@ export function App() {
 
   const active = conversations.find((c) => c.id === activeId) ?? null
 
+  // Whether the model in the composer can be sent images. Unknown models
+  // default to no, so the attach control never promises what it cannot do.
+  const vision = models.find((m) => m.id === model)?.vision ?? false
+
   useEffect(() => {
     const el = scrollRef.current
     if (el) el.scrollTop = el.scrollHeight
   }, [messages, busy])
 
+  const startNewChat = useCallback(() => {
+    setActiveId(null)
+    setMessages([])
+    setError(null)
+    setDraft('')
+    setAttachments([])
+    setMenuOpen(false)
+  }, [])
+
+  const chooseConversation = useCallback(
+    (id: number) => {
+      setError(null)
+      setMenuOpen(false)
+      loadConversation(id).catch(() => show('Could not load that conversation.'))
+    },
+    [loadConversation, show],
+  )
+
   const selectModel = async (id: string) => {
     setModel(id)
     setModelMenu(false)
+    const picked = models.find((m) => m.id === id)
+    if (attachments.length > 0 && !picked?.vision) {
+      setAttachments([])
+      show('That model cannot see images, so they were removed.')
+    }
     if (active) {
       await api.renameConversation(active.id, { model: id }).catch(() => {})
       refreshAll().catch(() => {})
@@ -72,9 +120,31 @@ export function App() {
     setBusy(false)
   }
 
+  const addFiles = async (files: FileList | null) => {
+    if (!files || files.length === 0) return
+    if (!vision) {
+      show('Pick a model that can see to attach images.')
+      return
+    }
+    const room = MAX_IMAGES - attachments.length
+    const picked = Array.from(files).slice(0, room)
+    const images = picked.filter((file) => file.type.startsWith('image/'))
+    const oversized = images.filter((file) => file.size > MAX_IMAGE_BYTES)
+    const usable = images.filter((file) => file.size <= MAX_IMAGE_BYTES)
+    if (images.length < picked.length) show('Only images can be attached.')
+    else if (oversized.length > 0) show('Each image must stay under 8 MB.')
+    if (usable.length === 0) return
+    try {
+      const read = await Promise.all(usable.map(readAttachment))
+      setAttachments((list) => [...list, ...read].slice(0, MAX_IMAGES))
+    } catch {
+      show('Could not read that image.')
+    }
+  }
+
   const send = async () => {
     const content = draft.trim()
-    if (!content || busy) return
+    if ((!content && attachments.length === 0) || busy) return
 
     let conversationId = activeId
     if (conversationId === null) {
@@ -90,9 +160,16 @@ export function App() {
       }
     }
 
+    if (attachments.length > 0 && !vision) {
+      show('Pick a model that can see to send images.')
+      return
+    }
+
+    const sending = attachments
     const tempUserId = -Date.now()
     const tempAssistantId = tempUserId - 1
     setDraft('')
+    setAttachments([])
     setBusy(true)
     setError(null)
     setMessages((list) => [
@@ -104,6 +181,7 @@ export function App() {
         content,
         reasoning: '',
         model: '',
+        attachments: sending,
         memory_ids: [],
         created_at: new Date().toISOString(),
       },
@@ -114,6 +192,7 @@ export function App() {
         content: '',
         reasoning: '',
         model,
+        attachments: [],
         memory_ids: [],
         created_at: new Date().toISOString(),
       },
@@ -122,7 +201,7 @@ export function App() {
     const ctrl = new AbortController()
     abort.current = ctrl
     try {
-      await streamMessage(conversationId, content, model, ctrl.signal, (event) => {
+      await streamMessage(conversationId, content, model, sending, ctrl.signal, (event) => {
         if (event.event === 'start') {
           setMessages((list) =>
             list.map((m) =>
@@ -181,26 +260,36 @@ export function App() {
   const greeting = name ? `What can I help with, ${name}?` : 'What can I help with?'
 
   return (
-    <div className="app">
+    <div className={`app ${menuOpen ? 'menu-open' : ''}`}>
       <Rail
         conversations={conversations}
         activeId={activeId}
-        onSelect={(id) => {
-          setError(null)
-          loadConversation(id).catch(() => show('Could not load that conversation.'))
-        }}
-        onNew={() => {
-          setActiveId(null)
-          setMessages([])
-          setError(null)
-          setDraft('')
-        }}
+        onSelect={chooseConversation}
+        onNew={startNewChat}
         onDelete={removeConversation}
         memoryCount={memories.filter((m) => m.enabled).length}
-        onOpenMemory={() => setDrawer(true)}
+        onOpenMemory={() => {
+          setMenuOpen(false)
+          setDrawer(true)
+        }}
       />
+      {menuOpen && <div className="rail-scrim" onMouseDown={() => setMenuOpen(false)} />}
 
       <main className="chat">
+        <header className="phone-bar">
+          <button className="phone-icon" onClick={() => setMenuOpen(true)} aria-label="Open chats">
+            <svg viewBox="0 0 18 18" aria-hidden="true">
+              <path d="M3 5h12M3 9h12M3 13h12" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+            </svg>
+          </button>
+          <span className="phone-brand">self</span>
+          <button className="phone-icon" onClick={startNewChat} aria-label="New chat">
+            <svg viewBox="0 0 18 18" aria-hidden="true">
+              <path d="M9 4v10M4 9h10" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+            </svg>
+          </button>
+        </header>
+
         <div className="scroller" ref={scrollRef}>
           <div className="stack">
             {activeId === null && messages.length === 0 && (
@@ -247,7 +336,10 @@ export function App() {
                   className={`model-option ${m.id === model ? 'active' : ''}`}
                   onClick={() => selectModel(m.id)}
                 >
-                  <span className="model-option-label">{m.label}</span>
+                  <span className="model-option-label">
+                    {m.label}
+                    {m.vision && <span className="model-option-tag">sees images</span>}
+                  </span>
                   <span className="model-option-id">{m.id}</span>
                 </button>
               ))}
@@ -262,6 +354,10 @@ export function App() {
             placeholder={config?.hasKey === false ? 'Add SELF_API_KEY and restart' : 'Message self'}
             modelLabel={model || 'Select model…'}
             onModelChange={() => setModelMenu((open) => !open)}
+            vision={vision}
+            attachments={attachments}
+            onAddFiles={addFiles}
+            onRemoveAttachment={(index) => setAttachments((list) => list.filter((_, i) => i !== index))}
           />
         </div>
       </main>
