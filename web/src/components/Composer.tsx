@@ -9,12 +9,10 @@ interface ComposerProps {
   placeholder: string
   modelLabel: string
   onModelChange: () => void
-  remember: () => void
-  rememberBusy: boolean
 }
 
-// The writing area: a ruled line that grows, with the send control, the model
-// the reply will come from, and a remember button for what matters.
+// The message box: a soft rounded field that grows with what is typed, the
+// model that will answer, and one round button that sends or stops.
 export function Composer({
   value,
   onChange,
@@ -24,8 +22,6 @@ export function Composer({
   placeholder,
   modelLabel,
   onModelChange,
-  remember,
-  rememberBusy,
 }: ComposerProps) {
   const area = useRef<HTMLTextAreaElement>(null)
 
@@ -53,23 +49,26 @@ export function Composer({
         placeholder={placeholder}
         onChange={(e) => onChange(e.target.value)}
         onKeyDown={onKeyDown}
-        aria-label="Write a message"
+        aria-label="Message self"
       />
       <div className="composer-row">
-        <button className="ghost" onClick={remember} disabled={rememberBusy} title="Save what this conversation taught me">
-          {rememberBusy ? 'reading…' : 'remember'}
-        </button>
-        <span className="composer-hint">enter sends · shift-enter a new line</span>
-        <button className="model-pick" onClick={onModelChange} title="Change the answering model">
-          as {modelLabel}
+        <button className="model-pick" onClick={onModelChange} title="Change the model">
+          {modelLabel}
+          <svg viewBox="0 0 12 12" aria-hidden="true" className="model-pick-caret">
+            <path d="M3 5l3 3 3-3" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
         </button>
         {busy ? (
           <button className="send stop" onClick={onStop} aria-label="Stop the reply">
-            Stop
+            <svg viewBox="0 0 16 16" aria-hidden="true">
+              <rect x="4" y="4" width="8" height="8" rx="1.5" fill="currentColor" />
+            </svg>
           </button>
         ) : (
-          <button className="send" onClick={onSend} disabled={!value.trim()} aria-label="Send">
-            Send
+          <button className="send" onClick={onSend} disabled={!value.trim()} aria-label="Send message">
+            <svg viewBox="0 0 16 16" aria-hidden="true">
+              <path d="M8 13V3.5M8 3.5L4 7.5M8 3.5l4 4" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
           </button>
         )}
       </div>

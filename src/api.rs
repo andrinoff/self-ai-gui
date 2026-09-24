@@ -367,11 +367,12 @@ fn sse(event: &str, data: serde_json::Value) -> Result<Event, Infallible> {
 /// Sends a message and streams the reply back.
 ///
 /// The shape of the stream is fixed and small:
-///   `start`  { messageId, model, memories: [...] }   before any text
-///   `delta`  { text }                                repeatedly
-///   `done`   { messageId }                           the reply is complete
-///   `memory` { added: [...] }                        notes mined afterwards
-///   `error`  { message }                             anything went wrong
+///   `start`    { messageId, model, memories: [...] }   before any text
+///   `thinking` { text }                                reasoning chunks, if any
+///   `delta`    { text }                                repeatedly
+///   `done`     { messageId }                           the reply is complete
+///   `memory`   { added: [...] }                        notes mined afterwards
+///   `error`    { message }                             anything went wrong
 #[allow(clippy::too_many_lines)]
 async fn send_message(
     State(state): State<Arc<AppState>>,
@@ -476,6 +477,7 @@ async fn send_message(
     let stream = async_stream::stream! {
         let mut reply = upstream_for_reply.stream(&model, &turns_for_reply).boxed();
         let mut buffered = String::new();
+        let mut reasoning = String::new();
 
         yield sse("start", serde_json::json!({
             "messageId": placeholder,
@@ -488,6 +490,10 @@ async fn send_message(
                 Ok(StreamEvent::Delta(text)) => {
                     buffered.push_str(&text);
                     yield sse("delta", serde_json::json!({ "text": text }));
+                }
+                Ok(StreamEvent::Thinking(text)) => {
+                    reasoning.push_str(&text);
+                    yield sse("thinking", serde_json::json!({ "text": text }));
                 }
                 Ok(StreamEvent::Error(message)) => {
                     yield sse("error", serde_json::json!({ "message": message }));
@@ -505,10 +511,11 @@ async fn send_message(
         // broke off: a partial reply still beats losing the turn.
         let text = buffered;
         let ids = used_ids;
+        let thinking = reasoning;
         let store = store_for_reply.clone();
         if let Err(e) = tokio::task::spawn_blocking(move || {
             store
-                .update_message(placeholder, &text, &ids)
+                .update_message(placeholder, &text, &thinking, &ids)
                 .and_then(|()| store.touch_conversation(conversation_id))
         })
         .await
@@ -729,6 +736,7 @@ mod tests {
             conversation_id: 1,
             role: role.into(),
             content: content.into(),
+            reasoning: String::new(),
             model: String::new(),
             memory_ids: vec![],
             created_at: String::new(),

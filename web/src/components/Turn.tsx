@@ -1,76 +1,75 @@
+import { useEffect, useRef, useState } from 'react'
 import { Markdown } from './Markdown'
-import type { Memory, Message } from '../types'
+import type { Message } from '../types'
 
 interface TurnProps {
   message: Message
-  memories: Map<number, Memory>
   streaming?: boolean
-  learned?: Memory[]
   error?: string
-  onRemember?: () => void
-  onOpenMemory?: (id: number) => void
-  remembering?: boolean
 }
 
-// One exchange in the transcript. Speaker attribution sits in the left margin
-// the way a printed interview does, so the reply itself gets the whole measure.
-export function Turn({
-  message,
-  memories,
-  streaming,
-  learned,
-  error,
-  onRemember,
-  onOpenMemory,
-  remembering,
-}: TurnProps) {
-  const used = message.memory_ids
-    .map((id) => memories.get(id))
-    .filter((memory): memory is Memory => Boolean(memory))
+// One exchange: the person's question in a bubble on the right, the reply on
+// the left with the model's reasoning folded away behind a disclosure.
+export function Turn({ message, streaming, error }: TurnProps) {
+  const reasoning = message.reasoning.trim()
+  const [open, setOpen] = useState(false)
+  const touched = useRef(false)
+  const answered = useRef(false)
+
+  // Follow along while the model is still thinking, then fold the trace away
+  // the moment the answer starts, unless the reader opened it themselves.
+  useEffect(() => {
+    if (!reasoning) return
+    if (touched.current) return
+    if (message.content === '') {
+      setOpen(true)
+    } else if (!answered.current) {
+      answered.current = true
+      setOpen(false)
+    }
+  }, [reasoning, message.content])
+
+  if (message.role === 'user') {
+    return (
+      <article className="turn user">
+        <div className="bubble">{message.content}</div>
+      </article>
+    )
+  }
 
   return (
-    <article className={`turn ${message.role}`}>
-      <span className="speaker">{message.role === 'user' ? 'you' : 'self'}</span>
+    <article className="turn assistant">
+      <span className="avatar" aria-hidden="true">
+        <svg viewBox="0 0 16 16">
+          <circle cx="8" cy="8" r="4.5" fill="currentColor" />
+        </svg>
+      </span>
       <div className="turn-body">
+        {reasoning && (
+          <div className={`thinking ${open ? 'open' : ''}`}>
+            <button
+              className="thinking-toggle"
+              onClick={() => {
+                touched.current = true
+                setOpen((value) => !value)
+              }}
+              aria-expanded={open}
+            >
+              <svg viewBox="0 0 12 12" aria-hidden="true" className="thinking-caret">
+                <path d="M4.5 3l3 3-3 3" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+              <span>{streaming && message.content === '' ? 'Thinking…' : 'Thoughts'}</span>
+            </button>
+            {open && <div className="thinking-body">{reasoning}</div>}
+          </div>
+        )}
+
         <div className="turn-text">
           <Markdown text={message.content} />
-          {streaming && message.content === '' && <span className="caret" aria-label="composing" />}
-          {streaming && message.content !== '' && <span className="caret" aria-label="composing" />}
+          {streaming && <span className="caret" aria-label="composing" />}
         </div>
 
         {error && <p className="turn-error">{error}</p>}
-
-        {message.role === 'assistant' && used.length > 0 && (
-          <ul className="footnotes">
-            {used.map((memory, i) => (
-              <li key={memory.id}>
-                <button className="footnote" onClick={() => onOpenMemory?.(memory.id)}>
-                  <sup>{i + 1}</sup>
-                  {memory.text}
-                </button>
-              </li>
-            ))}
-          </ul>
-        )}
-
-        {learned && learned.length > 0 && (
-          <ul className="learned">
-            {learned.map((memory) => (
-              <li key={memory.id}>remembered: {memory.text}</li>
-            ))}
-          </ul>
-        )}
-
-        {message.role === 'assistant' && !streaming && message.content && onRemember && (
-          <button
-            className="remember"
-            onClick={onRemember}
-            disabled={remembering}
-            title="Look through this conversation for things worth keeping"
-          >
-            {remembering ? 'reading the conversation…' : 'remember something'}
-          </button>
-        )}
       </div>
     </article>
   )

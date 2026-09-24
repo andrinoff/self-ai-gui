@@ -35,8 +35,6 @@ export const api = {
   patchMemory: (id: number, patch: { text?: string; kind?: string; pinned?: boolean; enabled?: boolean }) =>
     request<Memory>('PATCH', `/api/memories/${id}`, patch),
   deleteMemory: (id: number) => request<void>('DELETE', `/api/memories/${id}`),
-  rememberNow: (conversationId: number) =>
-    request<{ added: Memory[] }>('POST', `/api/conversations/${conversationId}/remember`, {}),
 }
 
 /// Reads one SSE response from a POST, because the browser's EventSource

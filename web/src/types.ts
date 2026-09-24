@@ -25,6 +25,7 @@ export interface Message {
   conversation_id: number
   role: 'user' | 'assistant' | string
   content: string
+  reasoning: string
   model: string
   memory_ids: number[]
   created_at: string
@@ -49,6 +50,7 @@ export interface PublicConfig {
 
 export type StreamEvent =
   | { event: 'start'; messageId: number; model: string; memories: Memory[] }
+  | { event: 'thinking'; text: string }
   | { event: 'delta'; text: string }
   | { event: 'done'; messageId: number; model: string }
   | { event: 'memory'; added: Memory[] }

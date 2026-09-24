@@ -5,7 +5,6 @@ import type { Memory } from '../types'
 interface MemoryDrawerProps {
   open: boolean
   memories: Memory[]
-  focusId: number | null
   autoEvery: number
   onClose: () => void
   onAdd: (text: string, kind: string) => void
@@ -13,12 +12,11 @@ interface MemoryDrawerProps {
   onDelete: (id: number) => void
 }
 
-// The memory, as marginalia: every note the assistant keeps, what it is for,
-// and the controls to correct it. Corrections apply to future prompts only.
+// Everything the assistant has chosen to keep, and the controls to correct it.
+// Corrections apply to future prompts only.
 export function MemoryDrawer({
   open,
   memories,
-  focusId,
   autoEvery,
   onClose,
   onAdd,
@@ -169,13 +167,11 @@ export function MemoryDrawer({
           aria-label="Search notes"
         />
 
-        {focusId && <p className="focus-note">you asked about one of these</p>}
-
         <div className="drawer-body">
           {memories.length === 0 && (
             <p className="drawer-empty">
-              Nothing yet. Either write a note above, or talk for a couple of turns: the conversation
-              is mined every {autoEvery} turns, and you can press “remember” under any reply.
+              Nothing kept yet. Write a note above, or just talk: self reads the conversation every{' '}
+              {autoEvery} turns and keeps whatever seems worth remembering.
             </p>
           )}
           {pinned.length > 0 && (

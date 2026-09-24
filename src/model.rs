@@ -19,6 +19,8 @@ pub struct Message {
     pub conversation_id: i64,
     pub role: String, // user | assistant
     pub content: String,
+    /// The model's reasoning trace for this turn, when it exposed one.
+    pub reasoning: String,
     pub model: String,
     pub memory_ids: Vec<i64>,
     pub created_at: String,

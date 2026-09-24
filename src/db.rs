@@ -99,6 +99,13 @@ impl Store {
             CREATE INDEX IF NOT EXISTS idx_memories_enabled ON memories(enabled, pinned);
             "#,
         )?;
+        // Columns added after the first release. Each is best effort: on a
+        // fresh database the CREATE above already included it and the ALTER
+        // fails harmlessly, which is why the result is ignored.
+        let _ = conn.execute(
+            "ALTER TABLE messages ADD COLUMN reasoning TEXT NOT NULL DEFAULT ''",
+            [],
+        );
         Ok(Store {
             conn: Mutex::new(conn),
         })
@@ -228,19 +235,20 @@ impl Store {
     pub fn list_messages(&self, conversation_id: i64) -> Result<Vec<Message>, StoreError> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, conversation_id, role, content, model, memory_ids, created_at
+            "SELECT id, conversation_id, role, content, reasoning, model, memory_ids, created_at
              FROM messages WHERE conversation_id = ? ORDER BY id",
         )?;
         let rows = stmt.query_map([conversation_id], |row| {
-            let ids: String = row.get(5)?;
+            let ids: String = row.get(6)?;
             Ok(Message {
                 id: row.get(0)?,
                 conversation_id: row.get(1)?,
                 role: row.get(2)?,
                 content: row.get(3)?,
-                model: row.get(4)?,
+                reasoning: row.get(4)?,
+                model: row.get(5)?,
                 memory_ids: parse_ids(&ids),
-                created_at: row.get(6)?,
+                created_at: row.get(7)?,
             })
         })?;
         let mut out = Vec::new();
@@ -279,12 +287,13 @@ impl Store {
         &self,
         id: i64,
         content: &str,
+        reasoning: &str,
         memory_ids: &[i64],
     ) -> Result<(), StoreError> {
         let conn = self.conn.lock().unwrap();
         conn.execute(
-            "UPDATE messages SET content = ?, memory_ids = ? WHERE id = ?",
-            params![content, encode_ids(memory_ids), id],
+            "UPDATE messages SET content = ?, reasoning = ?, memory_ids = ? WHERE id = ?",
+            params![content, reasoning, encode_ids(memory_ids), id],
         )?;
         Ok(())
     }

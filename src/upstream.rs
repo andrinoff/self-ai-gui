@@ -21,6 +21,8 @@ pub struct Upstream {
 pub enum StreamEvent {
     /// A chunk of assistant text.
     Delta(String),
+    /// A chunk of the model's private reasoning, when it exposes one.
+    Thinking(String),
     /// The provider signalled a clean end.
     Done,
     /// The provider reported an error inside the stream.
@@ -235,12 +237,50 @@ impl Upstream {
 /// Reads assistant text out of either the streaming shape (`delta`) or the
 /// non-streaming one (`message`).
 fn content_of(json: &serde_json::Value) -> Option<String> {
-    json.get("choices")
-        .and_then(|choices| choices.get(0))
-        .and_then(|choice| choice.get("delta").or_else(|| choice.get("message")))
+    choice_part(json)
         .and_then(|part| part.get("content"))
         .and_then(|content| content.as_str())
         .map(str::to_string)
+}
+
+/// Reads the model's reasoning out of a chunk. Providers disagree on the name:
+/// OpenRouter and DeepSeek expose `reasoning`/`reasoning_content`, and some send
+/// a plain string where others nest an object.
+fn reasoning_of(json: &serde_json::Value) -> Option<String> {
+    let part = choice_part(json)?;
+    for key in ["reasoning_content", "reasoning"] {
+        match part.get(key) {
+            Some(value) if value.is_string() => {
+                return value.as_str().map(str::to_string);
+            }
+            Some(value) => {
+                if let Some(text) = value
+                    .get("content")
+                    .and_then(|content| content.as_str())
+                    .filter(|text| !text.is_empty())
+                {
+                    return Some(text.to_string());
+                }
+                if let Some(text) = value
+                    .get("summary")
+                    .and_then(|summary| summary.as_str())
+                    .filter(|text| !text.is_empty())
+                {
+                    return Some(text.to_string());
+                }
+            }
+            None => {}
+        }
+    }
+    None
+}
+
+/// The first choice, under whichever name a provider used for the piece that
+/// carries text (`delta` while streaming, `message` for a whole reply).
+fn choice_part(json: &serde_json::Value) -> Option<&serde_json::Value> {
+    json.get("choices")
+        .and_then(|choices| choices.get(0))
+        .and_then(|choice| choice.get("delta").or_else(|| choice.get("message")))
 }
 
 /// Turns one SSE line into an event. Pure and testable: a line is the unit the
@@ -271,7 +311,10 @@ pub fn parse_sse_line(line: &str) -> Option<StreamEvent> {
     }
     match content_of(&json) {
         Some(text) if !text.is_empty() => Some(StreamEvent::Delta(text)),
-        _ => None,
+        _ => match reasoning_of(&json) {
+            Some(text) if !text.is_empty() => Some(StreamEvent::Thinking(text)),
+            _ => None,
+        },
     }
 }
 
@@ -322,6 +365,26 @@ mod tests {
         // Some providers echo the non-streaming shape instead of a delta.
         let msg = parse_sse_line(r#"data: {"choices":[{"message":{"content":"yo"}}]}"#);
         assert_eq!(msg, Some(StreamEvent::Delta("yo".into())));
+    }
+
+    #[test]
+    fn sse_reads_reasoning_as_thinking() {
+        let openrouter =
+            parse_sse_line(r#"data: {"choices":[{"delta":{"reasoning":"weighing the options"}}]}"#);
+        assert_eq!(
+            openrouter,
+            Some(StreamEvent::Thinking("weighing the options".into()))
+        );
+
+        let deepseek =
+            parse_sse_line(r#"data: {"choices":[{"delta":{"reasoning_content":"counting"}}]}"#);
+        assert_eq!(deepseek, Some(StreamEvent::Thinking("counting".into())));
+
+        // A chunk that carries both prefers the answer text over the thinking.
+        let both = parse_sse_line(
+            r#"data: {"choices":[{"delta":{"reasoning":"hmm","content":"Answer"}}]}"#,
+        );
+        assert_eq!(both, Some(StreamEvent::Delta("Answer".into())));
     }
 
     #[test]

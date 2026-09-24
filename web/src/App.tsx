@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { ago, api, streamMessage } from './api'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { api, streamMessage } from './api'
 import { Composer } from './components/Composer'
 import { MemoryDrawer } from './components/MemoryDrawer'
 import { Rail } from './components/Rail'
@@ -19,9 +19,6 @@ export function App() {
   const [busy, setBusy] = useState(false)
   const [note, setNote] = useState<string | null>(null)
   const [drawer, setDrawer] = useState(false)
-  const [focusMemory, setFocusMemory] = useState<number | null>(null)
-  const [learned, setLearned] = useState<Memory[]>([])
-  const [remembering, setRemembering] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const abort = useRef<AbortController | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -54,8 +51,6 @@ export function App() {
   }, [])
 
   const active = conversations.find((c) => c.id === activeId) ?? null
-
-  const memoryMap = useMemo(() => new Map(memories.map((m) => [m.id, m])), [memories])
 
   useEffect(() => {
     const el = scrollRef.current
@@ -100,7 +95,6 @@ export function App() {
     setDraft('')
     setBusy(true)
     setError(null)
-    setLearned([])
     setMessages((list) => [
       ...list,
       {
@@ -108,6 +102,7 @@ export function App() {
         conversation_id: conversationId!,
         role: 'user',
         content,
+        reasoning: '',
         model: '',
         memory_ids: [],
         created_at: new Date().toISOString(),
@@ -117,6 +112,7 @@ export function App() {
         conversation_id: conversationId!,
         role: 'assistant',
         content: '',
+        reasoning: '',
         model,
         memory_ids: [],
         created_at: new Date().toISOString(),
@@ -135,12 +131,17 @@ export function App() {
                 : m,
             ),
           )
+        } else if (event.event === 'thinking') {
+          setMessages((list) =>
+            list.map((m) =>
+              m.id === tempAssistantId ? { ...m, reasoning: m.reasoning + event.text } : m,
+            ),
+          )
         } else if (event.event === 'delta') {
           setMessages((list) =>
             list.map((m) => (m.id === tempAssistantId ? { ...m, content: m.content + event.text } : m)),
           )
         } else if (event.event === 'memory') {
-          setLearned(event.added)
           setMemories((list) => {
             const seen = new Set(list.map((m) => m.id))
             return [...list, ...event.added.filter((m) => !seen.has(m.id))]
@@ -167,28 +168,6 @@ export function App() {
     }
   }
 
-  const rememberNow = async () => {
-    if (activeId === null || remembering) return
-    setRemembering(true)
-    try {
-      const { added } = await api.rememberNow(activeId)
-      if (added.length) {
-        setLearned(added)
-        setMemories((list) => {
-          const seen = new Set(list.map((m) => m.id))
-          return [...list, ...added.filter((m) => !seen.has(m.id))]
-        })
-        show(`Kept ${added.length} ${added.length === 1 ? 'note' : 'notes'}.`)
-      } else {
-        show('Nothing new to keep from this conversation.')
-      }
-    } catch (e) {
-      show(e instanceof Error ? e.message : 'Could not read the conversation.')
-    } finally {
-      setRemembering(false)
-    }
-  }
-
   const removeConversation = async (id: number) => {
     await api.deleteConversation(id).catch(() => {})
     if (activeId === id) {
@@ -198,12 +177,8 @@ export function App() {
     refreshAll().catch(() => {})
   }
 
-  const openMemoryAt = (id: number) => {
-    setFocusMemory(id)
-    setDrawer(true)
-  }
-
-  const assistantIsLast = messages.length > 0 && messages[messages.length - 1].role === 'assistant'
+  const name = config?.person && config.person !== 'the user' ? config.person : ''
+  const greeting = name ? `What can I help with, ${name}?` : 'What can I help with?'
 
   return (
     <div className="app">
@@ -222,78 +197,47 @@ export function App() {
         }}
         onDelete={removeConversation}
         memoryCount={memories.filter((m) => m.enabled).length}
-        onOpenMemory={() => {
-          setFocusMemory(null)
-          setDrawer(true)
-        }}
-        model={model}
-        onOpenModels={() => setModelMenu(true)}
-        baseUrl={config?.baseUrl ?? ''}
-        hasKey={config?.hasKey ?? false}
+        onOpenMemory={() => setDrawer(true)}
       />
 
       <main className="chat" ref={scrollRef}>
-        <div className="transcript">
-          {activeId === null && (
-            <div className="intro">
-              <p className="intro-line">
-                Ask anything. This one keeps what matters between conversations.
-              </p>
-              <div className="intro-suggest">
-                {['Explain something simply', 'Help me plan the week', 'What do you remember about me?'].map((s) => (
-                  <button
-                    key={s}
-                    className="suggest"
-                    onClick={() => {
-                      setDraft(s)
-                      const el = document.querySelector<HTMLTextAreaElement>('.composer-input')
-                      el?.focus()
-                    }}
-                  >
-                    {s}
-                  </button>
-                ))}
+        <div className="stack">
+          {activeId === null && messages.length === 0 && (
+            <div className="welcome">
+              <h2 className="welcome-title">{greeting}</h2>
+              <div className="suggestions">
+                {['Explain something simply', 'Help me plan the week', 'What do you remember about me?'].map(
+                  (s) => (
+                    <button
+                      key={s}
+                      className="suggestion"
+                      onClick={() => {
+                        setDraft(s)
+                        document.querySelector<HTMLTextAreaElement>('.composer-input')?.focus()
+                      }}
+                    >
+                      {s}
+                    </button>
+                  ),
+                )}
               </div>
             </div>
           )}
 
-          {activeId !== null && (
-            <header className="transcript-head">
-              <h2 className="transcript-title">{active?.title || 'New conversation'}</h2>
-              <span className="transcript-meta">
-                {active && `${active.message_count} turns · ${ago(active.updated_at)}`}
-              </span>
-            </header>
-          )}
-
-          {messages.map((message) => {
-            const isStreaming = busy && message.role === 'assistant' && message.id < 0
-            return (
-              <Turn
-                key={message.id}
-                message={message}
-                memories={memoryMap}
-                streaming={isStreaming}
-                error={isStreaming && error ? error : undefined}
-                learned={assistantIsLast && message.role === 'assistant' && message.id === messages[messages.length - 1].id ? learned : undefined}
-                onRemember={message.role === 'assistant' && message.content ? rememberNow : undefined}
-                onOpenMemory={openMemoryAt}
-                remembering={remembering}
-              />
-            )
-          })}
-
-          {activeId !== null && messages.length === 0 && (
-            <div className="intro">
-              <p className="intro-line">This conversation is empty. Ask something to begin.</p>
-            </div>
-          )}
+          {messages.map((message) => (
+            <Turn
+              key={message.id}
+              message={message}
+              streaming={busy && message.role === 'assistant' && message.id < 0}
+              error={busy && message.role === 'assistant' && message.id < 0 ? error ?? undefined : undefined}
+            />
+          ))}
         </div>
 
         <div className="composer-wrap">
           {modelMenu && (
             <div className="model-menu" role="menu">
-              <p className="model-menu-head">Answering as</p>
+              <p className="model-menu-head">Model</p>
               {models.length === 0 && <p className="model-menu-empty">No models from the provider.</p>}
               {models.map((m) => (
                 <button
@@ -301,8 +245,8 @@ export function App() {
                   className={`model-option ${m.id === model ? 'active' : ''}`}
                   onClick={() => selectModel(m.id)}
                 >
-                  <span>{m.label}</span>
-                  <span className="model-id">{m.id}</span>
+                  <span className="model-option-label">{m.label}</span>
+                  <span className="model-option-id">{m.id}</span>
                 </button>
               ))}
             </div>
@@ -313,11 +257,9 @@ export function App() {
             onSend={send}
             onStop={stop}
             busy={busy}
-            placeholder={config?.hasKey === false ? 'Add SELF_API_KEY and restart…' : 'Ask anything, or tell me something to keep…'}
-            modelLabel={model || '…'}
+            placeholder={config?.hasKey === false ? 'Add SELF_API_KEY and restart' : 'Message self'}
+            modelLabel={model || 'Select model…'}
             onModelChange={() => setModelMenu((open) => !open)}
-            remember={rememberNow}
-            rememberBusy={remembering}
           />
         </div>
       </main>
@@ -325,7 +267,6 @@ export function App() {
       <MemoryDrawer
         open={drawer}
         memories={memories}
-        focusId={focusMemory}
         autoEvery={config?.memoryEvery ?? 2}
         onClose={() => setDrawer(false)}
         onAdd={async (text, kind) => {
