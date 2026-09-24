@@ -223,13 +223,20 @@ button {
   display: flex;
   flex-direction: column;
   min-width: 0;
+  overflow: hidden;
+}
+/* The messages scroll inside their own region, so the composer below never
+   moves: it is a flex row of the column, not a sticky overlay. */
+.scroller {
+  flex: 1;
+  min-height: 0;
   overflow-y: auto;
   scrollbar-width: thin;
 }
 .stack {
   width: min(100%, var(--column));
   margin: 0 auto;
-  padding: 32px 24px 12px;
+  padding: 32px 24px 24px;
   display: flex;
   flex-direction: column;
   gap: 26px;
@@ -452,8 +459,8 @@ button {
 
 /* ---------- composer ---------- */
 .composer-wrap {
-  position: sticky;
-  bottom: 0;
+  position: relative;
+  flex-shrink: 0;
   padding: 10px 24px 22px;
   background: var(--bg);
 }
@@ -548,18 +555,23 @@ button {
   background: var(--bg-hover);
 }
 
-/* model menu */
+/* model menu — floats above the composer so opening it never shifts the input */
 .model-menu {
-  width: min(100%, var(--column));
-  margin: 0 auto 10px;
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(calc(100% - 48px), 360px);
   padding: 6px;
   background: var(--bg);
   border: 1px solid var(--line);
   border-radius: 16px;
   box-shadow: var(--shadow);
-  max-height: 280px;
+  max-height: min(280px, 45vh);
   overflow-y: auto;
   scrollbar-width: thin;
+  z-index: 20;
+  animation: rise 0.16s var(--ease) both;
 }
 .model-menu-head {
   margin: 4px 10px 6px;
@@ -898,7 +910,7 @@ button {
     padding: 0 10px 8px;
   }
   .stack {
-    padding: 20px 16px 8px;
+    padding: 20px 16px 16px;
     gap: 22px;
   }
   .bubble {

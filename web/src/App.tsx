@@ -200,38 +200,40 @@ export function App() {
         onOpenMemory={() => setDrawer(true)}
       />
 
-      <main className="chat" ref={scrollRef}>
-        <div className="stack">
-          {activeId === null && messages.length === 0 && (
-            <div className="welcome">
-              <h2 className="welcome-title">{greeting}</h2>
-              <div className="suggestions">
-                {['Explain something simply', 'Help me plan the week', 'What do you remember about me?'].map(
-                  (s) => (
-                    <button
-                      key={s}
-                      className="suggestion"
-                      onClick={() => {
-                        setDraft(s)
-                        document.querySelector<HTMLTextAreaElement>('.composer-input')?.focus()
-                      }}
-                    >
-                      {s}
-                    </button>
-                  ),
-                )}
+      <main className="chat">
+        <div className="scroller" ref={scrollRef}>
+          <div className="stack">
+            {activeId === null && messages.length === 0 && (
+              <div className="welcome">
+                <h2 className="welcome-title">{greeting}</h2>
+                <div className="suggestions">
+                  {['Explain something simply', 'Help me plan the week', 'What do you remember about me?'].map(
+                    (s) => (
+                      <button
+                        key={s}
+                        className="suggestion"
+                        onClick={() => {
+                          setDraft(s)
+                          document.querySelector<HTMLTextAreaElement>('.composer-input')?.focus()
+                        }}
+                      >
+                        {s}
+                      </button>
+                    ),
+                  )}
+                </div>
               </div>
-            </div>
-          )}
+            )}
 
-          {messages.map((message) => (
-            <Turn
-              key={message.id}
-              message={message}
-              streaming={busy && message.role === 'assistant' && message.id < 0}
-              error={busy && message.role === 'assistant' && message.id < 0 ? error ?? undefined : undefined}
-            />
-          ))}
+            {messages.map((message) => (
+              <Turn
+                key={message.id}
+                message={message}
+                streaming={busy && message.role === 'assistant' && message.id < 0}
+                error={busy && message.role === 'assistant' && message.id < 0 ? error ?? undefined : undefined}
+              />
+            ))}
+          </div>
         </div>
 
         <div className="composer-wrap">
